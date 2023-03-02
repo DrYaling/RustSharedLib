@@ -20,6 +20,7 @@ pub mod attribute;
 pub mod net_core;
 pub mod discard;
 pub mod aes;
+pub mod vec;
 pub use time::{get_timestamp_now, get_timestamp_of_today, one_day_time, get_current_ms};
 mod weight;
 pub use weight::WeightCalculater;
@@ -29,6 +30,7 @@ pub mod db;
 pub mod logger;
 pub mod server;
 pub use error::*;
+pub use vec::Vector;
 pub use server::{
     SocketHandler,
     channel::{AsyncTransportChannel},
