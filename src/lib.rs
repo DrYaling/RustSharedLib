@@ -28,6 +28,7 @@ pub mod redis;
 pub mod db;
 pub mod logger;
 pub mod server;
+pub use error::*;
 pub use server::{
     SocketHandler,
     channel::{AsyncTransportChannel},
