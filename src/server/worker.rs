@@ -8,6 +8,8 @@ use tokio::net::TcpListener;
 use tokio::runtime::Builder;
 use tokio::signal;
 
+use crate::error::GameResult;
+
 use super::{handler::SyncSessionHandler, session::TransferTemplate};
 
 pub(crate) static RUNTIME: OnceCell<Arc<Runtime>> = OnceCell::new();
@@ -33,9 +35,9 @@ where
     RUNTIME.get().unwrap().spawn(future)
 }
 ///初始化worker 工作线程
-pub fn init(mut worker_count: usize) -> anyhow::Result<()>{
+pub fn init(mut worker_count: usize) -> GameResult<()>{
     if RUNTIME.get().is_some(){
-        return Err(anyhow::anyhow!("runtime started!"));
+        return game_err!("runtime started!");
     }
     if worker_count == 0{
         worker_count = num_cpus::get();
@@ -49,7 +51,7 @@ pub fn init(mut worker_count: usize) -> anyhow::Result<()>{
         .set(Arc::new(runtime))
         .map_err(|_| ())
         .expect("tokio runtime 已设置");
-    log_info!("worker started {} thread worker", worker_count);
+    info!("worker started {} thread worker", worker_count);
     Ok(())
 }
 ///```
@@ -61,7 +63,7 @@ pub fn run<S: Sized + Debug + Send + Sync + 'static + Clone + TransferTemplate>(
     let addr = address.to_string();
     let (broadcast_tx, _) = tokio::sync::broadcast::channel(300000);
     SHUTDOWN_HANDLER.set(broadcast_tx).expect("服务已启动");
-    log_info!("start server address {}",address);
+    info!("start server address {}",address);
     spawn(async move {
         tokio::select! {
             res = run_server::<S>(addr, sync_mode) => {

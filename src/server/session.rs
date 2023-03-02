@@ -1,7 +1,7 @@
 //! server
 //! 
 use tokio::sync::mpsc::{UnboundedReceiver};
-use crate::proto::{self, Header};
+use crate::{proto::{self, Header}, error::GameResult};
 use super::{handler::SessionHandler, socket_handler::{RecvHandler, SendHandler, SocketHandler}, worker::ServiceCommand};
 //use super::waker::Waker;
 use std::{fmt::Debug, sync::{atomic::{AtomicI32, Ordering}}};
@@ -21,7 +21,7 @@ pub enum SessionTransportType<T: Sized + TransferTemplate>{
     Template(T),
 }
 impl<T: Sized + TransferTemplate> SessionTransportType<T>{
-    pub fn into<V: Sized + TransferTemplate>(self) -> anyhow::Result<SessionTransportType<V>>{
+    pub fn into<V: Sized + TransferTemplate>(self) -> GameResult<SessionTransportType<V>>{
         match self{
             SessionTransportType::Packet(pkt) => Ok(SessionTransportType::Packet(pkt)),
             SessionTransportType::SessionPacket(pkt) => Ok(SessionTransportType::SessionPacket(pkt)),
@@ -200,12 +200,12 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
             }
         };
         self.shutdown().await.ok();
-        log_info!("session {} quit, reason {:?}", self.session_id, result);
+        info!("session {} quit, reason {:?}", self.session_id, result);
         result
     }
     async fn run_session(&mut self, connect_timeout_check: bool) -> std::io::Result<()>{
         let mut result = Ok(());
-        log_info!("run session {} with connect_timeout_check {}",self.session_id, connect_timeout_check);
+        info!("run session {} with connect_timeout_check {}",self.session_id, connect_timeout_check);
         let mut receiver = self.receiver.take().unwrap();
         if let Some(h) = &self.handler{
             trace!("session {} connected with handler {:p}", self.session_id, h);
@@ -217,14 +217,14 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
         while connect_timeout_check{
             match tokio::time::timeout(std::time::Duration::from_millis(PACKET_TIMEOUT), self.read()).await{
                 Ok(res) => {
-                    //log_info!("session {} connection result {:?}", self.session_id, res);
+                    //info!("session {} connection result {:?}", self.session_id, res);
                     match res{
                         Ok(size) if size == 0 => {
                             self.send_sync(SocketMessage::OnDisconnect).ok();
                             return Ok(());
                         },
                         Err(e) => {
-                            log_info!("session {} read socket stream fail, session killed {:?}",self.session_id,e);
+                            info!("session {} read socket stream fail, session killed {:?}",self.session_id,e);
                             self.send_sync(SocketMessage::OnDisconnect).ok();
                             return Err(std::io::ErrorKind::ConnectionAborted.into());
                         },
@@ -232,9 +232,9 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
                     }
                 },
                 Err(_) => {
-                    //log_info!("session {} connection timeout!", self.session_id);
+                    //info!("session {} connection timeout!", self.session_id);
                     self.send_sync(SocketMessage::OnDisconnect).ok();
-                    log_info!("session {} connect timeout packet count {}", self.session_id, self.packet_count);
+                    info!("session {} connect timeout packet count {}", self.session_id, self.packet_count);
                     return Err(std::io::ErrorKind::TimedOut.into());
                 },
             }
@@ -251,11 +251,11 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
                     match res{
                         Ok(size) if size == 0 => {
                             self.send_sync(SocketMessage::OnDisconnect).ok();
-                            log_info!("session {} disconnected by remote", self.session_id);
+                            info!("session {} disconnected by remote", self.session_id);
                             break;
                         },
                         Err(e) => {
-                            log_info!("session {} read socket stream fail, session killed {:?}",self.session_id,e);
+                            info!("session {} read socket stream fail, session killed {:?}",self.session_id,e);
                             self.send_sync(SocketMessage::OnDisconnect).ok();
                             result = Err(std::io::ErrorKind::ConnectionAborted.into());
                             break;
@@ -268,7 +268,7 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
                 }
             }{
                 if let Err(e) = self.queue_write(transport).await{
-                    log_info!("session {} send packets fail {:?}",self.session_id,e);
+                    info!("session {} send packets fail {:?}",self.session_id,e);
                     self.send_sync(SocketMessage::OnDisconnect).ok();
                     result = Err(e);
                     break;
@@ -286,10 +286,10 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
             // there is, this means that the peer closed the socket while
             // sending a frame.
             if self.buffer.size() == 0 {
-                //log_info!("socket {} disconnected",self.session_id);
+                //info!("socket {} disconnected",self.session_id);
                 return Ok(0);
             } else {
-                //log_info!("socket {} disconnected while sending",self.session_id);
+                //info!("socket {} disconnected while sending",self.session_id);
                 return Err(std::io::ErrorKind::ConnectionReset.into());
             }
         }
@@ -306,10 +306,10 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
                             Ok(_) => (),
                             Err(e) => {
                                 if let Some(h) = &self.handler{
-                                    log_error!("session {},handler {:p} fail to send pack(Cur) {:?}", self.session_id, h, e);
+                                    error!("session {},handler {:p} fail to send pack(Cur) {:?}", self.session_id, h, e);
                                 }
                                 else{
-                                    log_error!("session {},handler None,fail to send pack(Cur) {:?}", self.session_id, e);
+                                    error!("session {},handler None,fail to send pack(Cur) {:?}", self.session_id, e);
                                 }
                                 return Err(std::io::ErrorKind::InvalidData.into());
                                 
@@ -340,10 +340,10 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
                                     Ok(_) => (),
                                     Err(e) => {
                                         if let Some(h) = &self.handler{
-                                            log_error!("session {},handler {:p} fail to send pack(Cur) {:?}", self.session_id, h, e);
+                                            error!("session {},handler {:p} fail to send pack(Cur) {:?}", self.session_id, h, e);
                                         }
                                         else{
-                                            log_error!("session {},handler None,fail to send pack(Cur) {:?}", self.session_id, e);
+                                            error!("session {},handler None,fail to send pack(Cur) {:?}", self.session_id, e);
                                         }
                                         self.send_sync(SocketMessage::OnDisconnect).ok();
                                         return Err(std::io::ErrorKind::InvalidData.into());
@@ -358,7 +358,7 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
                             }
                         }
                         else{
-                            log_error!("session {} recv error packet of code {}, data size {}",self.session_id, code, size);
+                            error!("session {} recv error packet of code {}, data size {}",self.session_id, code, size);
                             return Err(std::io::ErrorKind::InvalidData.into());
                         }
                     }
@@ -374,10 +374,10 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
         let (code,squence) =( pack.header().sub_code(),pack.header().squence());
         if code != crate::proto::proto_code::HEART {
             if squence > 0{
-                log_info!("session {} on msg {} rpc {}",self.session_id,code,squence);
+                info!("session {} on msg {} rpc {}",self.session_id,code,squence);
             }
             else{
-                log_info!("session {} on msg {}",self.session_id,code);
+                info!("session {} on msg {}",self.session_id,code);
             }
         }
         self.send_sync(SocketMessage::Message(pack))?;
@@ -389,7 +389,7 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
         let size = buffer.size();
         let SessionTransport{code,sub_code,rpc_squence,transport} = msg;
         if sub_code as u16 != crate::proto::proto_code::HEART {
-            log_info!("session {} send packet {}",self.session_id,code);
+            info!("session {} send packet {}",self.session_id,code);
         }
         match transport{
             SessionTransportType::Packet(pack) => {
@@ -398,7 +398,7 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
                         buffer.write(bytes.as_slice(), bytes.len());
                     },
                     Err(_) => {
-                        log_error!("session {} fail to write pack: write buffe pack fail!",self.session_id);
+                        error!("session {} fail to write pack: write buffe pack fail!",self.session_id);
                         return Err(std::io::ErrorKind::InvalidData.into());
                     }
                 }
@@ -411,14 +411,14 @@ impl<T, R, S: Sized + Clone + 'static + Send + Sync + Debug + TransferTemplate> 
                 if let Some(proxy) = msg.get_proxy(){
                     self.proxy = proxy.into();
                 }
-                log_info!("custom msg {:?}",msg);
+                info!("custom msg {:?}",msg);
             },
             SessionTransportType::SessionPacket(_) => todo!(),
         }
         self.flush().await
     }
     fn send_sync(&self, msg: SocketMessage<S>) -> anyhow::Result<()>{
-        log_info!("send_sync msg is {:?}", msg);
+        info!("send_sync msg is {:?}", msg);
         match &self.proxy{
             Some(proxy) => {
                 match msg{

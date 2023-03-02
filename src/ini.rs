@@ -82,7 +82,7 @@ pub fn parse(file_name: &str) -> Result<BTreeMap<String,String>,String>{
             }
         },
         Err(e) => {
-            log_error!("fail to open file {}",file_name);
+            error!("fail to open file {}",file_name);
             return Err(e.to_string());
         }
     }

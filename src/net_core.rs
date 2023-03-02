@@ -127,7 +127,7 @@ impl From<&[u8]> for Header{
             0
         };
         if size > 10 * 1024 * 1024{
-            log_error!("msg size of {}:{} error: {}(longger than 10M), header buffer {:?}", main_code, sub_code, size, t);
+            error!("msg size of {}:{} error: {}(longger than 10M), header buffer {:?}", main_code, sub_code, size, t);
             size = 0;
         }
         //println!("pack flag {}, size {}, opcode {}, crc {}, squence {}, header_size {}", flag,size,code,crc,squence,Header::header_size(t));
@@ -147,7 +147,7 @@ pub struct ByteBuffer{
 impl ByteBuffer{
     pub fn new(mut size: usize) -> Self{
         if size > 10 * 1024 * 1024{
-            log_error!("create byte buffer fail, msg len error {}", size);
+            error!("create byte buffer fail, msg len error {}", size);
             size = 1024;
         }
         Self{
@@ -197,7 +197,7 @@ impl ByteBuffer{
         }
         else{
             if self.buffer.len() + size > usize::MAX/2{
-                log_error!("error memory management!");
+                error!("error memory management!");
                 abort();
             }
             self.buffer.reserve(self.wpos + size*2);
@@ -345,7 +345,7 @@ impl PackBuffer{
         if crc == 0 {
             Ok(())
         } else {
-            log_error!("fail to check received buffer");
+            error!("fail to check received buffer");
             Err(std::io::ErrorKind::InvalidData.into())
         }
     }
@@ -353,7 +353,7 @@ impl PackBuffer{
     pub fn unpack<T: protobuf::Message>(&self) -> std::io::Result<T>{
         //println!("unpack buffer {}- {:?}",self.buffer.len(),self.buffer.as_slice());
         T::parse_from_bytes(self.buffer.as_slice()).map_err(|e|{
-            log_error!("decode msg fail {:?}",e);
+            error!("decode msg fail {:?}",e);
             std::io::Error::from(std::io::ErrorKind::InvalidData)
         })
     }
@@ -367,7 +367,7 @@ impl PackBuffer{
         self.buffer
     }
     pub fn print(&self){
-        log_info!("{:?}",self);
+        info!("{:?}",self);
     }
 }
 ///打包二进制
@@ -377,7 +377,7 @@ pub fn pack<'a, T: protobuf::Message>(code: u16, sub_code: u16, data: T, rpc: Op
     let header = Header::new(code, sub_code, data_size, data.get_cached_size() > 32*1024,rpc);
     let mut bytes = header.serialize();
     let mut body = data.write_to_bytes().map_err(|e|{
-        log_error!("fail to pack data size {:?}",e);
+        error!("fail to pack data size {:?}",e);
         std::io::Error::from(std::io::ErrorKind::InvalidData)
     })?;
     bytes.append(&mut body);
@@ -391,7 +391,7 @@ pub fn pack_box<'a>(code: u16, sub_code: u16, data: Box<dyn protobuf::Message>, 
     let mut bytes = header.serialize();
     
     let mut body = data.write_to_bytes().map_err(|e|{
-        log_error!("fail to pack data size {:?}",e);
+        error!("fail to pack data size {:?}",e);
         std::io::Error::from(std::io::ErrorKind::InvalidData)
     })?;
     bytes.append(&mut body);

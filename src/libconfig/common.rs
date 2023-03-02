@@ -43,16 +43,16 @@ pub fn load_config_with_content(content: &str) -> anyhow::Result<()>{
 /// 
 ///# 注意, string类型不能通过此接口获取
 pub fn get_value<T: FromStr>(key: &str) -> Option<T>{
-    match CONFIGS.get().or_else(|| {log_error!("common config not initialized");None})?.get(None).unwrap().get(key){
+    match CONFIGS.get().or_else(|| {error!("common config not initialized");None})?.get(None).unwrap().get(key){
         None => None,
         Some(v) => {
-            T::from_str(&v.value).map_err(|e| log_error!("解析common字段 {} 错误 value {}",key, v.value)).ok()
+            T::from_str(&v.value).map_err(|e| error!("解析common字段 {} 错误 value {}",key, v.value)).ok()
         }
     }
 }
 ///获取配置属性
 pub fn get_str(key: &str) -> Option<String>{
-    CONFIGS.get().or_else(|| {log_error!("common config not initialized");None})?.get(None).unwrap().get(key).map(|cfg| cfg.value.clone())
+    CONFIGS.get().or_else(|| {error!("common config not initialized");None})?.get(None).unwrap().get(key).map(|cfg| cfg.value.clone())
 }
 pub fn unload_all(){
     match CONFIGS.get(){

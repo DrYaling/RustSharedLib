@@ -14,7 +14,7 @@ impl<T: Clone> WeightCalculater<T> for &Vec<T>{
 impl<T: Clone> WeightCalculater<T> for Vec<T>{
     fn weight_cloned(&self, weights: &Vec<i32>) -> Option<T> {
         if weights.len() != self.len(){
-            log_error!("计算权重失败,权重列表 {} 和对象列表 {} 长度不一致", weights.len(), self.len());
+            error!("计算权重失败,权重列表 {} 和对象列表 {} 长度不一致", weights.len(), self.len());
             return None;
         }
         //计算权重

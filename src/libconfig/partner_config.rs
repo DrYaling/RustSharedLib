@@ -38,7 +38,7 @@ pub fn load_config_with_content(content: &str) -> anyhow::Result<()>{
 }
 ///加载角色配置
 pub fn load_partner_config(config_id: u32)-> Option<PartnerConfig>{
-    CONFIGS.get().or_else(|| {log_error!("partner config not initialized");None})?.get(None).or_else(|| {log_error!("ai config not initialized");None})?.get(&config_id).cloned()
+    CONFIGS.get().or_else(|| {error!("partner config not initialized");None})?.get(None).or_else(|| {error!("ai config not initialized");None})?.get(&config_id).cloned()
 }
 pub fn load_partner_configs<F: Fn(&(&u32,&PartnerConfig)) -> bool>(predicate: F) -> BTreeMap<u32,PartnerConfig>{
     CONFIGS.get().expect("partner config not initialized yet!").get(None).unwrap().iter().filter(predicate).map(|(id,cfg)| (*id,cfg.clone())).collect()

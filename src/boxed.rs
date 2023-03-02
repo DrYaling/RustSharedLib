@@ -2,10 +2,8 @@
 use std::{
     cell::UnsafeCell, 
     sync::Condvar, 
-    marker::PhantomData, 
     ops::{Deref, DerefMut}, 
-    ptr::{self, NonNull}, 
-    sync::{Mutex, atomic::{AtomicUsize, Ordering}}
+    sync::{Mutex, atomic::{AtomicUsize, Ordering}, Arc, Weak}, any::TypeId
 };
 
 #[cfg(debug_assertions)]
@@ -111,15 +109,16 @@ impl<'a,T,B: LockableBox> DerefMut for MutBox<'a,T,B>{
 impl<'a,T, B> Drop for MutBox<'a,T,B> where B: LockableBox{
     fn drop(&mut self) {
         self.ref_box.locker().fetch_sub(MAX_SIZE, Ordering::Release);
+        // println!("drop ref_count {}", self.ref_box.get_ref());
         self.ref_box.notify_all();
     }
 }
 impl<T> MutableBox<T>{
-    pub fn new(t: T) -> Self{
+    pub const fn new(t: T) -> Self{
         Self{
             cdv_mtx: Mutex::new(()),
             condvar: Condvar::new(),
-            mutex: Default::default(),
+            mutex: AtomicUsize::new(0),
             data: UnsafeCell::new(t),
         }
     }
@@ -198,7 +197,14 @@ impl<T> MutableBox<T>{
             }.into()
         }
     }
-    
+    #[inline]
+    pub fn lock_ref(&self) -> Option<RefBox<T, Self>>{
+        self.get(None)
+    }
+    #[inline]
+    pub fn lock_mut(&self) -> Option<MutBox<T, Self>>{
+        self.get_mut(None)
+    }
     //blocking get mut reference
     pub fn get_mut(&self, time_out: Option<i64>) -> Option<MutBox<T, Self>> {
         if self.mutex.compare_exchange(0, MAX_SIZE, Ordering::SeqCst, Ordering::SeqCst).is_ok(){
@@ -217,8 +223,11 @@ impl<T> MutableBox<T>{
             let mut time_out_dur = std::time::Duration::from_millis(time_out.unwrap_or(500) as u64);
             let time_out_cond = time_out.unwrap_or_default() > 0;
             let back_off = Backoff::new();
+            let broad_time =  std::time::Duration::from_secs(5).as_millis();
             loop {
+                //if not mutable aquired, lock first
                 if self.ref_count() < MAX_SIZE{
+                    //lock
                     self.mutex.fetch_or(LOCK_FLAG, Ordering::Release);
                 }
                 //wait for next loop check
@@ -234,6 +243,7 @@ impl<T> MutableBox<T>{
                             time_out_dur = std::time::Duration::from_millis(rest_time as u64);
                         }
                         else{
+                            //timeout, unlock and fail
                             self.mutex.fetch_and(!LOCK_FLAG, Ordering::Release);
                             return None;
                         }
@@ -245,20 +255,21 @@ impl<T> MutableBox<T>{
                     //reset time out duration                    
                     locker = mtx.into();
                     let elapsed = instance.elapsed().as_millis();
+                    //timeout, unkock and fail
                     if time_out_cond && _rt.timed_out(){
                         self.mutex.fetch_and(!LOCK_FLAG, Ordering::Release);
-                        log_error!("fail to aquire element ,time out for {} mills",elapsed);
+                        error!("fail to aquire element ,time out for {} mills", elapsed);
                         return None;
                     }
                     else if time_out_cond{
                         if time_out.unwrap() as u128 <= elapsed{
                             self.mutex.fetch_and(!LOCK_FLAG, Ordering::Release);
-                            log_error!("fail to aquire element ,time out for {} mills",elapsed);
+                            error!("fail to aquire element ,time out for {} mills", elapsed);
                             return None;
                         }
                     }
-                    if !error_once && elapsed > std::time::Duration::from_secs(5).as_millis(){
-                        log_error!("fail to aquire element ,time out {}, ref count {}",elapsed, rc);
+                    if !error_once && elapsed > broad_time{
+                        error!("fail to aquire element ,time out {}, ref count {}", elapsed, rc);
                         error_once = true;
                     }
                 }
@@ -267,7 +278,9 @@ impl<T> MutableBox<T>{
                 }
             }
             //unlock
+            // let rc = 
             self.mutex.fetch_and(!LOCK_FLAG, Ordering::Release);
+            // println!("get mut unlocked {}-> {}", rc, self.ref_count());
             let ref_data = unsafe{ &mut *self.data.get()};
             MutBox{
                 data: ref_data,
@@ -320,51 +333,80 @@ impl<T> SingleThreadBox<T>{
         }
     }
 }
-struct Inner<T: std::marker::Sized> {
-    ///ref to self
-    ref_count: AtomicUsize,
-    data: MutableBox<T>,
-}
+///mutable version of std::sync::Arc
 pub struct MutexArc<T>{
-    value: NonNull<Inner<T>>,
-    phantom: PhantomData<Inner<T>>,
+    inner: Arc<MutableBox<T>>
 }
 impl<T> MutexArc<T>{
     pub fn new(t: T) -> Self{
-        let raw = Box::new(Inner {
-            ref_count: Default::default(),
-            data: MutableBox::new(t)
-        });
         Self{
-            value: NonNull::new(Box::into_raw(raw)).unwrap(),
-            phantom: Default::default(),
+            inner: Arc::new(MutableBox::new(t))
         }
     }
-    fn inner(&self) -> &Inner<T>{
-        unsafe{ self.value.as_ref()}
-    }
+    #[inline]
     pub fn get_mut(&self, to: Option<i64>) -> Option<MutBox<T,MutableBox<T>>>{
-        self.inner().data.get_mut(to)
+        self.inner.get_mut(to)
+    }
+    #[inline]
+    //this will take a while to check fail, then panic if get mut fail, almost used by single threaded logic
+    pub fn mut_checked(&self)  -> MutBox<T,MutableBox<T>>{
+        self.inner.get_mut(Some(16)).or_else(||{
+            error!("mut_checked fail, object may be locked");
+            None
+        })
+        .unwrap()
+    }
+    #[inline]
+    pub fn lock_mut(&self) -> Option<MutBox<T,MutableBox<T>>>{
+        self.inner.get_mut(None)
     }   
+    #[inline]
     pub fn get(&self) -> RefBox<T, MutableBox<T>>{
-        self.inner().data.get(None).unwrap()
+        self.inner.get(None).unwrap()
+    }   
+    #[inline]
+    pub fn get_checked(&self) -> RefBox<T, MutableBox<T>>{
+        self.inner.get(None).or_else(||{
+            error!("get_checked fail, object may be locked");
+            None
+        }).unwrap()
     } 
+    /**
+     * get weak ptr of data
+     */
+    #[inline]
+    pub fn get_weak(&self) -> Weak<MutableBox<T>>{
+        Arc::downgrade(&self.inner)
+    } 
+    /**
+     * get weak ptr of data
+     */
+    #[inline]
+    pub fn get_weak_to<R: Sized + 'static>(&self) -> Option<Weak<MutableBox<R>>> where T: 'static{
+        if TypeId::of::<R>() == TypeId::of::<T>(){
+            let ptr = self as *const MutexArc<T> as *const () as *const MutexArc<R>;
+            Some(unsafe{&*ptr}.get_weak())
+        }
+        else{
+            None
+        }
+    }
+    ///convert this shared ptr into another ptr
+    #[inline]
+    pub fn convert_to<R: Sized + 'static>(self) -> Option<MutexArc<R>> where T: 'static{
+        if TypeId::of::<R>() == TypeId::of::<T>(){
+            let ptr = Arc::into_raw(self.inner) as *const ();
+            let arc = MutexArc{ inner: unsafe{Arc::from_raw(ptr as  *const MutableBox<R>)}};
+            Some(arc)
+        }
+        else{
+            None
+        }
+    }
 }
 impl<T> Clone for MutexArc<T> {
     fn clone(&self) -> Self {
-        self.inner().ref_count.fetch_add(1, Ordering::Release);
-        Self { value: self.value, phantom: Default::default()}
-    }
-}
-impl<T: std::marker::Sized> Drop for MutexArc<T> {
-    fn drop(&mut self) {
-        if self.inner().ref_count.fetch_sub(1, Ordering::Release) >= 1{
-            return;
-        }
-        std::sync::atomic::fence(Ordering::Acquire);
-        unsafe {
-            ptr::drop_in_place(&mut self.value.as_mut().data);
-        }
+        Self { inner: self.inner.clone() }
     }
 }
 unsafe impl<T: std::marker::Sized + Sync + Send> Send for MutexArc<T> {}

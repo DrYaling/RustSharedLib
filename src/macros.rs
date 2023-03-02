@@ -8,7 +8,7 @@ macro_rules! unpack {
         match $op {
             Some(v) => v,
             None => {
-                log_error!(
+                error!(
                     "got wrong value {:?} at {} in line {},column {}",
                     stringify!($op),
                     file!(),
@@ -23,7 +23,7 @@ macro_rules! unpack {
         match $op {
             Some(v) => v,
             None => {
-                log_error!(
+                error!(
                     "got wrong value {:?} at {} in line {},column {}",
                     stringify!($op),
                     file!(),
@@ -45,7 +45,7 @@ macro_rules! unpack_ref {
         match &$op {
             Some(v) => v.clone(),
             None => {
-                log_error!(
+                error!(
                     "got wrong value {:?} at {} in line {},column {}",
                     stringify!($op),
                     file!(),
@@ -60,7 +60,7 @@ macro_rules! unpack_ref {
         match &$op {
             Some(v) => v.clone(),
             None => {
-                log_error!(
+                error!(
                     "got wrong value {:?} at {} in line {},column {}",
                     stringify!($op),
                     file!(),
@@ -82,7 +82,7 @@ macro_rules! lock_unwrap {
         match $op.lock() {
             Ok(lg) => lg,
             Err(err) => {
-                log_error!("{:?} paniced ", err);
+                error!("{:?} paniced ", err);
                 err.into_inner()
             }
         }
@@ -113,7 +113,6 @@ macro_rules! lock_unwrap {
 ///         println!("lock_map value {}",v.value);
 ///
 ///     }).ok();
-/// ```
 #[allow(unused_macros)]
 #[macro_export]
 macro_rules! lock_map {
@@ -122,7 +121,7 @@ macro_rules! lock_map {
         match lg.is_ok() {
             true => lg.map($f),
             false => {
-                log_error!(
+                error!(
                     "{:} lock errorat  {} in line {},column {},err:\r\n{:?}",
                     stringify!($op),
                     file!(),
@@ -137,6 +136,28 @@ macro_rules! lock_map {
                 > = Ok(());
                 ret
             }
+        }
+    }};
+}
+///三目运算
+///
+/// 用法
+///
+///```
+///     let cond: Option<bool> = None;
+///
+///     let result = if_then_or!(cond.is_some(),"有值","没有值");
+///
+///     println!("result is {}",result); //result is 没有值
+/// ```
+#[allow(unused_macros)]
+#[macro_export]
+macro_rules! if_then_or {
+    ($condition:expr,$first:expr,$second:expr) => {{
+        if $condition {
+            $first
+        } else {
+            $second
         }
     }};
 }
@@ -162,6 +183,18 @@ macro_rules! if_else {
         }
     }};
 }
+#[macro_export]
+macro_rules! let_continue {
+    ($patten: pat, $exp: expr) => {
+        let $patten = $exp else {continue;};
+    };
+}
+#[macro_export]
+macro_rules! let_return {
+    ($patten: pat, $exp: expr, $result: expr) => {
+        let $patten = $exp else {return $result;};
+    };
+}
 ///log error and throw out message
 /// ```
 /// use crate::macros::*;
@@ -173,20 +206,21 @@ macro_rules! if_else {
 #[macro_export]
 macro_rules! logthrow {
     ($e: expr, $out: expr) => {{
+        #[cfg(not(test))]
         if cfg!(not(test)){
-            log_error!("error {:?}",$e);
+            error!("{:?}",$e);
         }
-        else{
-            println!("error {:?} at file {} line {}",$e,file!(),line!());
+        if cfg!(test){
+            println!("{:?} at file {} line {}",$e,file!(),line!());
         }
         $out
     }};
     ($e: expr, $msg: expr, $out: expr) => {{
         if cfg!(not(test)){
-            log_error!("error {:?}-{:?} at file {} line {}",$e,$msg,file!(),line!());
+            error!("{:?}-{:?} at file {} line {}",$e,$msg,file!(),line!());
         }
-        else{
-            println!("error {:?}-{:?} at file {} line {}",$e,$msg,file!(),line!());
+        if cfg!(test){
+            println!("{:?}-{:?} at file {} line {}",$e,$msg,file!(),line!());
         }
         $out
     }};
@@ -202,35 +236,50 @@ macro_rules! logthrow {
 #[macro_export]
 macro_rules! logout {
     ($e: expr) => {{
-        if cfg!(not(test)){
-            log_error!("error {:?}",$e);
-        }
-        else{
-            println!("error {:?} at file {} line {}",$e,file!(),line!());
-        }
+        #[cfg(not(test))]
+        error!("error {:?}",$e);
+        #[cfg(test)]
+        println!("error {:?} at file {} line {}",$e,file!(),line!());
         $e
     }};
-    ($e: expr, $msg: expr) => {{
-        if cfg!(not(test)){
-            log_error!("error {:?}-{:?} at file {} line {}",$e,$msg,file!(),line!());
-        }
-        else{
-            println!("error {:?}-{:?} at file {} line {}",$e,$msg,file!(),line!());
-        }
+    ($e: expr, $($arg:tt)+) => ({
+        #[cfg(not(test))]
+        error!("{}",format_args!($($arg)+));
+        #[cfg(test)]
+        println!("{}",format_args!($($arg)+));
         $e
+    });
+}
+///write backtrace into error
+#[macro_export]
+macro_rules! backtrace {
+    ($e: expr) => {{
+        let mut e = $e; 
+        match $crate::GameError::as_mut(&mut e) {
+            Some(error) => {
+                error.backtrace(format!("at {}:{}", file!(), line!()).into());
+                e
+            },
+            None => {
+                let mut error = $crate::GameError::from(format!("{:?}", e));
+                error.backtrace(format!("at {}:{}", file!(), line!()).into());
+                error.into()
+            },
+        } 
     }};
 }
 #[macro_export]
 macro_rules! log_if_err {
     ($e: expr) => {{
         let error = $e;
+        #[cfg(not(test))]
         if cfg!(not(test)){
             if let Err(err) = &error{
-                log_error!("unexpected error {:?}", err);
+                error!("{:?}", err);
             }
         }
-        else{
-            println!("unexpected error {:?} at file {} line {}",error,file!(),line!());
+        if cfg!(test){
+            println!("{:?} at file {} line {}",error,file!(),line!());
         }
         error
     }};
@@ -238,11 +287,11 @@ macro_rules! log_if_err {
         let error = $e;
         if cfg!(not(test)){
             if let Err(err) = &error{
-                log_error!("unexpected error {:?}-{:?} at file {} line {}",error,$msg,file!(),line!());
+                error!("{:?}-{:?} at file {} line {}",error,$msg,file!(),line!());
             }
         }
-        else{
-            println!("unexpected error {:?}-{:?} at file {} line {}",error,$msg,file!(),line!());
+        if cfg!(test){
+            println!("{:?}-{:?} at file {} line {}",error,$msg,file!(),line!());
         }
         error
     }};
@@ -259,7 +308,7 @@ macro_rules! rwlock_read {
         match $op.read() {
             Ok(lg) => lg,
             Err(err) => {
-                log_error!("{:?} paniced ", err);
+                error!("{:?} paniced ", err);
                 err.into_inner()
             }
         }
@@ -275,7 +324,7 @@ macro_rules! rwlock_write {
         match $op.write() {
             Ok(lg) => lg,
             Err(err) => {
-                log_error!("{:?} paniced ", err);
+                error!("{:?} paniced ", err);
                 err.into_inner()
             }
         }
@@ -283,23 +332,51 @@ macro_rules! rwlock_write {
 }
 ///wraper of log::error!()
 #[macro_export]
-macro_rules! log_error {
+macro_rules! error {
     ($($arg:tt)+) => ({
-        error!("{} at file {}, line {}", format_args!($($arg)+), file!(),line!())
+        #[cfg(test)]
+        println!("{} at file {}, line {}", format_args!($($arg)+), file!(),line!());
+        #[cfg(not(test))]
+        $crate::logger::_logger_error(format_args!("{} at file {}, line {}", format_args!($($arg)+), file!(),line!()))
     })
 }
 ///wraper of log::info!()
 #[macro_export]
-macro_rules! log_info {
+macro_rules! info {
     ($($arg:tt)+) => ({
-        info!("{} at file {}, line {}", format_args!($($arg)+), file!(),line!())
+        #[cfg(test)]
+        println!("{} at {}:{} {:?}", format_args!($($arg)+), file!(),line!(), std::backtrace::Backtrace::capture());
+        #[cfg(not(test))]
+        $crate::logger::_logger_info(format_args!("{} at file {}, line {}", format_args!($($arg)+), file!(),line!()))
     })
 }
+
 ///wraper of log::debug!()
 #[macro_export]
-macro_rules! log_debug {
+macro_rules! debug {
     ($($arg:tt)+) => ({
-        debug!("{} at file {}, line {}", format_args!($($arg)+), file!(),line!())
+        if $crate::debug_enabled() {
+            $crate::logger::_logger_debug(format_args!("{} at file {}, line {}", format_args!($($arg)+), file!(),line!()))
+        }
+    })
+}
+///wraper of log::trace!()
+#[macro_export]
+macro_rules! trace {
+    ($($arg:tt)+) => ({
+        if $crate::debug_enabled() {
+            $crate::logger::_logger_trace(format_args!("{} at file {}, line {}", format_args!($($arg)+), file!(),line!()))
+        }
+    })
+}
+///wraper of log::warn!()
+#[macro_export]
+macro_rules! warn {
+    ($($arg:tt)+) => ({
+        #[cfg(test)]
+        println!("{} at {}:{} {:?}", format_args!($($arg)+), file!(),line!(), std::backtrace::Backtrace::capture());
+        #[cfg(not(test))]
+        $crate::logger::_logger_warn(format_args!("{} at file {}, line {}", format_args!($($arg)+), file!(),line!()))
     })
 }
 ///wraper of text!()
@@ -313,7 +390,19 @@ macro_rules! log_debug {
 #[macro_export]
 macro_rules! text {
     ($($arg:tt)+) => ({
-        format!("{} at file {}, line {}", format_args!($($arg)+), file!(),line!())
+        format!("{} at {}:{}", format_args!($($arg)+), file!(),line!())
+    })
+}
+///battle result from string (format)
+/// ```
+/// let state_id = 1;
+/// return game_err!("fail to start state {}", state_id);
+/// ```
+#[macro_export]
+macro_rules! game_err {
+    ($($arg:tt)+) => ({
+        let ret = format!("{} at {}:{}", format_args!($($arg)+), file!(),line!());
+        $crate::error::game_result(ret)
     })
 }
 /// destruct structure
@@ -332,6 +421,27 @@ macro_rules! destruct_self {
         $($p:ident),+
     ) => {
         let Self{
+            $($p,)*
+            ..} = $s;
+    };
+}
+/// destruct structure
+/// ```
+/// struct Box{
+///     current_state: i32,
+///     state_old: i32,
+///     next_state: i32,
+/// }
+/// destruct!{box, Box, current_state, state_old};
+/// ```
+#[macro_export]
+macro_rules! destructor {
+    (
+        $s:expr,
+        $b:tt,
+        $($p:ident),+
+    ) => {
+        let $b{
             $($p,)*
             ..} = $s;
     };
@@ -417,6 +527,40 @@ macro_rules! push_record {
         }
     };
 }
+
+/// Vector macro useage
+/// ```
+/// println!("empty {:?}", vector);
+/// println!("one 1 {:?}", vector![Point2::new(1, 1)]);
+/// println!("one 2 {:?}", vector![Point2::new(1, 1); 1]);
+/// println!("more 1 {:?}", vector![Point2::new(1, 1), Point2::new(1, 1), Point2::new(1, 1)]);
+/// println!("more 2 {:?}", vector![Point2::new(1, 1); 3]);
+/// ```
+#[macro_export]
+macro_rules! vector {
+    () => (
+        $crate::vec::Vector::new()
+    );
+    (@one $x:expr) => (1usize);
+    ($elem:expr; $n:expr) => (
+        match $n{
+            0 => $crate::vec::Vector::new(),
+            1 => $crate::vec::Vector::One($elem),
+            c => $crate::vec::Vector::Dynamic(vec![$elem; c])
+        }
+    );
+    ($($x:expr),+ $(,)?) => ({
+        let count = 0usize $(+ vector!(@one $x))*;
+        if count ==1 {
+            #[allow(unused_mut)]
+            let mut vec = $crate::vec::Vector::new();
+            $(vec.push($x);)*
+            vec
+        } else {
+            $crate::vec::Vector::Dynamic(vec![$($x,)*])
+        }
+    });
+}
 #[cfg(test)]
 #[test]
 fn destructor_test(){
@@ -448,7 +592,19 @@ fn destructor_test(){
             println!("state {}, old_state {} {} {} {}", current_state, state_old, next_state, next_state1, next_state2);
         }
     }
-    Box{current_state: 1, state_old: 2, next_state: 3, next_state1: 3, next_state2: 3}.test_destructor();
+    loop{
+        let kk = || -> i32{
+            let_return!(Some(k), Some(2), 0);
+            k
+        };
+        let_continue!(Some(state), Some(1));
+        println!("state {}, kk {}", state, kk());
+        break;
+    }
+    let b = Box{current_state: 1, state_old: 2, next_state: 3, next_state1: 3, next_state2: 3};
+    destructor!(b, Box, current_state, state_old);
+    b.test_destructor();
+    println!("current_state {current_state}, state_old {state_old}");
     println!("vec str {:?}", vec_strs![1, "a", true, 0.4f32, Box::default()]);
     define!(a b c, 1 2f32 "3");
     define_mut!(x y z, 1 2f32 "3");

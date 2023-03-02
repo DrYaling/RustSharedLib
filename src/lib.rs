@@ -2,8 +2,6 @@
 //! created at 2021/12/27 by zxb
 #[macro_use]
 extern crate serde;
-#[macro_use]
-extern crate log;
 #[allow(unused)]
 #[macro_use]
 extern crate anyhow;
@@ -79,4 +77,59 @@ impl<T: Eq + Ord> ConditionCheck<T>{
             ConditionCheck::NotEqual(a) => a != b,
         }
     }
+}
+
+
+///debug模式开启
+static mut DEBUG_ENABLED: bool = false;
+#[inline]
+///调试模式开启
+pub fn debug_enabled() -> bool{
+    unsafe{
+        DEBUG_ENABLED
+    }
+}
+static DEBUG_LOCK: once_cell::sync::Lazy<std::sync::Mutex<()>> = once_cell::sync::Lazy::new(||std::sync::Mutex::new(()));
+///开启调试模式
+pub fn set_debug(enabled: bool){
+    let _m = DEBUG_LOCK.lock().unwrap();
+    unsafe{
+        DEBUG_ENABLED = enabled;
+    }
+}
+
+#[allow(unused)]
+///读取目录下的文件列表
+/// 
+/// 不会读取符号链接(symbolic link)
+pub fn read_files(path: &str, pattern: &str) -> anyhow::Result<Vec<String>> {
+    let files = std::fs::read_dir(path)?;    //读出目录
+    let mut output = Vec::new();
+    for path in files {
+        let entry = path?;
+        let file_type = entry.file_type()?;
+        if file_type.is_dir(){
+            output.append(&mut read_files(entry.path().as_path().to_str().unwrap(), pattern)?);
+        }
+        else if file_type.is_file(){
+            if pattern.len() > 0{
+                match entry.path().extension(){
+                    Some(ext) => {
+                        if let Some(pat) = ext.to_str(){
+                            if !pattern.contains(pat){
+                                continue;
+                            }
+                        }
+                        else{
+                            continue;
+                        }
+                    },
+                    _ => continue,
+                }
+            }
+            let path = entry.path().as_path().to_str().unwrap().replace("\\", "/").replace("\\\\", "/");
+            output.push(path);
+        }
+    }
+    Ok(output)
 }
