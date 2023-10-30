@@ -25,7 +25,6 @@ pub use time::{get_timestamp_now, get_timestamp_of_today, one_day_time, get_curr
 mod weight;
 pub use weight::WeightCalculater;
 pub mod proto;
-pub mod redis;
 pub mod db;
 pub mod logger;
 pub mod server;
